@@ -1,11 +1,11 @@
 import streamlit as st
 import requests
-import time
 import re
-from datetime import datetime, timedelta
+import json
+from datetime import datetime
 
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
-st.title("🔐 OTP Doctor Automation Tool")
+st.title("🔐 OTP Doctor Automation")
 
 # ==================== API CLASS ====================
 class OTPDoctor:
@@ -46,76 +46,89 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== SESSION STATE ====================
+# ==================== SESSION ====================
 if "numbers" not in st.session_state:
     st.session_state.numbers = []
-
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    st.header("⚙️ Settings")
-    
+    st.header("Settings")
     api_key_input = st.text_input("API Key", type="password", value=st.session_state.api_key)
     if st.button("Save Key"):
         st.session_state.api_key = api_key_input
-        st.success("Key saved")
+        st.success("Key saved for this session")
 
-    max_wait = st.number_input("Max wait time per number (seconds)", 
-                               min_value=30, max_value=600, value=120, step=30)
-    st.caption("Default = 2 minutes (120 sec)")
-
-    if st.session_state.api_key:
-        api = OTPDoctor(st.session_state.api_key)
-        if st.button("Refresh Balance"):
-            bal = api.get_balance()
-            st.info(f"Balance: {bal}")
-
-st.divider()
+    max_wait = st.number_input("Max wait time (seconds)", min_value=60, max_value=300, value=120, step=30)
 
 if not st.session_state.api_key:
-    st.warning("Please enter your API Key in the sidebar")
+    st.warning("Please enter and save your API Key in the sidebar")
     st.stop()
 
 api = OTPDoctor(st.session_state.api_key)
 
-# ==================== COUNTRY & SERVICES ====================
-st.subheader("1. Country & Services")
-
-col1, col2 = st.columns(2)
+# ==================== BALANCE ====================
+col1, col2 = st.columns([1, 3])
 with col1:
-    country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
+    if st.button("Check Balance"):
+        bal = api.get_balance()
+        st.success(f"Balance: {bal}")
 
-with col2:
-    if st.button("Load Services"):
-        services = api.get_services(country)
-        st.session_state.services = services
-        st.rerun()
+st.divider()
 
-if "services" in st.session_state:
-    search = st.text_input("Search services (whatsapp, telegram, etc.)")
-    services_list = st.session_state.services.split(",") if isinstance(st.session_state.services, str) else []
-    
-    if search:
-        filtered = [s for s in services_list if search.lower() in s.lower()]
+# ==================== COUNTRY & SERVICES ====================
+st.subheader("1. Select Country & Load Services")
+
+country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
+
+if st.button("Load Services"):
+    with st.spinner("Loading services..."):
+        services_raw = api.get_services(country)
+        st.session_state.services_raw = services_raw
+
+if "services_raw" in st.session_state:
+    st.text_area("Raw Services Response (for debugging)", st.session_state.services_raw, height=100)
+
+    # Try to parse services nicely
+    services_dict = {}
+    try:
+        data = json.loads(st.session_state.services_raw)
+        for sid, info in data.items():
+            name = info.get("service_name", sid)
+            price = info.get("service_price", "")
+            services_dict[sid] = f"{sid} - {name} ({price})"
+    except:
+        # Fallback if not JSON
+        lines = st.session_state.services_raw.replace("{", "").replace("}", "").split(",")
+        for line in lines:
+            if ":" in line:
+                parts = line.split(":")
+                sid = parts[0].strip().strip('"')
+                services_dict[sid] = sid
+
+    if services_dict:
+        service_options = list(services_dict.values())
+        selected_display = st.selectbox("Select Service", service_options)
+        # Extract clean service ID
+        selected_service = selected_display.split(" - ")[0].strip()
     else:
-        filtered = services_list[:40]
-    
-    selected_service = st.selectbox("Select Service", filtered if filtered else ["No services"])
+        selected_service = st.text_input("Enter Service ID manually (e.g. 101)")
 else:
     selected_service = st.text_input("Enter Service ID manually (e.g. 101)")
 
 # ==================== GET NUMBER ====================
-st.subheader("2. Get New Number")
+st.subheader("2. Get Virtual Number")
 
 if st.button("Get New Number", type="primary"):
-    if not selected_service or selected_service == "No services":
-        st.error("Please select a valid service")
+    if not selected_service:
+        st.error("Please select or enter a Service ID")
     else:
-        with st.spinner("Purchasing number..."):
+        with st.spinner("Buying number..."):
             response = api.get_number(selected_service, country=country)
         
+        st.write(f"API Response: `{response}`")  # For debugging
+
         if response.startswith("ACCESS_NUMBER"):
             parts = response.split(":")
             new_num = {
@@ -129,47 +142,34 @@ if st.button("Get New Number", type="primary"):
             st.session_state.numbers.append(new_num)
             st.success(f"✅ Number purchased: {parts[2]}")
         else:
-            st.error(f"Failed: {response}")
+            st.error(f"Failed to get number. Response: {response}")
 
 # ==================== NUMBERS LIST ====================
-st.subheader("3. Your Numbers (Multiple for same service)")
+st.subheader("3. Your Numbers")
 
 if not st.session_state.numbers:
-    st.info("No numbers yet. Buy one above.")
+    st.info("No numbers purchased yet.")
 else:
-    # Check All button
-    if st.button("Check All Pending OTPs"):
-        for num in st.session_state.numbers:
-            if num["otp"] is None and num["status"] == "Waiting":
-                status_resp = api.get_status(num["activation_id"])
-                if "STATUS_OK" in status_resp:
-                    match = re.search(r'\b(\d{4,8})\b', status_resp)
-                    if match:
-                        num["otp"] = match.group(1)
-                        num["status"] = "OTP Received"
-        st.rerun()
-
     for i, num in enumerate(st.session_state.numbers):
         time_elapsed = (datetime.now() - num["time"]).seconds
         remaining = max_wait - time_elapsed
 
-        with st.expander(f"📱 {num['phone']} | {num['service']} | {num['time'].strftime('%H:%M')}", expanded=True):
+        with st.expander(f"📱 {num['phone']} | Service: {num['service']}", expanded=True):
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
             st.write(f"**Time Elapsed:** {time_elapsed} sec")
 
             if num["otp"]:
-                st.success(f"OTP: {num['otp']}")
-                st.code(num['otp'], language="text")
+                st.success(f"**OTP:** {num['otp']}")
+                st.code(num['otp'])
             else:
                 if remaining > 0:
-                    st.warning(f"Waiting... {remaining} sec remaining (max {max_wait}s)")
+                    st.warning(f"Waiting for OTP... ({remaining}s remaining)")
                 else:
-                    st.error("Time exceeded 2 minutes!")
+                    st.error("Time limit reached!")
 
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
+                c1, c2, c3 = st.columns(3)
+                with c1:
                     if st.button("Check OTP", key=f"check_{i}"):
                         status_resp = api.get_status(num["activation_id"])
                         st.write(status_resp)
@@ -178,19 +178,14 @@ else:
                             if match:
                                 num["otp"] = match.group(1)
                                 num["status"] = "OTP Received"
-                                st.success(f"OTP Found: {num['otp']}")
-                
-                with col2:
-                    if st.button("Cancel Number", key=f"cancel_{i}"):
+                with c2:
+                    if st.button("Cancel", key=f"cancel_{i}"):
                         api.set_status(num["activation_id"], 8)
                         num["status"] = "Cancelled"
                         st.warning("Number cancelled")
-                
-                with col3:
-                    if remaining <= 0 and st.button("Auto Cancel (Timeout)", key=f"timeout_{i}"):
+                with c3:
+                    if remaining <= 0 and st.button("Cancel (Timeout)", key=f"timeout_{i}"):
                         api.set_status(num["activation_id"], 8)
-                        num["status"] = "Auto Cancelled (Timeout)"
-                        st.error("Cancelled due to timeout")
+                        num["status"] = "Auto Cancelled"
 
-st.divider()
-st.caption("You can buy multiple numbers for the same service. They will all appear above.")
+st.caption("Tip: You can buy multiple numbers for the same service.")
