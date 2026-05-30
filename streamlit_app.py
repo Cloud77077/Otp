@@ -2,10 +2,11 @@ import streamlit as st
 import requests
 import re
 import json
+import time
 from datetime import datetime
 
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
-st.title("🔐 OTP Doctor Automation")
+st.title("🔐 OTP Doctor Automation Tool")
 
 # ==================== API CLASS ====================
 class OTPDoctor:
@@ -13,33 +14,33 @@ class OTPDoctor:
         self.api_key = api_key
         self.base = "https://otpdoctor.in/stubs/handler_api.php"
 
-    def _get(self, params):
+    def _request(self, params):
         try:
             r = requests.get(self.base, params=params, timeout=30)
             return r.text.strip()
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {str(e)}"
 
     def get_balance(self):
-        return self._get({"action": "getBalance", "api_key": self.api_key})
+        return self._request({"action": "getBalance", "api_key": self.api_key})
 
     def get_countries(self):
-        return self._get({"action": "getCountries", "api_key": self.api_key})
+        return self._request({"action": "getCountries", "api_key": self.api_key})
 
     def get_services(self, country):
-        return self._get({"action": "getServices", "api_key": self.api_key, "country": country})
+        return self._request({"action": "getServices", "api_key": self.api_key, "country": country})
 
     def get_number(self, service, country=None):
         params = {"action": "getNumber", "api_key": self.api_key, "service": service}
         if country:
             params["country"] = country
-        return self._get(params)
+        return self._request(params)
 
     def get_status(self, activation_id):
-        return self._get({"action": "getStatus", "api_key": self.api_key, "id": activation_id})
+        return self._request({"action": "getStatus", "api_key": self.api_key, "id": activation_id})
 
     def set_status(self, activation_id, status):
-        return self._get({
+        return self._request({
             "action": "setStatus",
             "api_key": self.api_key,
             "id": activation_id,
@@ -55,137 +56,166 @@ if "api_key" not in st.session_state:
 # ==================== SIDEBAR ====================
 with st.sidebar:
     st.header("Settings")
-    api_key_input = st.text_input("API Key", type="password", value=st.session_state.api_key)
+    api_key = st.text_input("API Key", type="password", value=st.session_state.api_key)
     if st.button("Save Key"):
-        st.session_state.api_key = api_key_input
-        st.success("Key saved for this session")
+        st.session_state.api_key = api_key
+        st.success("Key saved")
 
-    max_wait = st.number_input("Max wait time (seconds)", min_value=60, max_value=300, value=120, step=30)
+    max_wait = st.slider("Max wait time per number (sec)", 60, 300, 120)
+    max_auto_attempts = st.slider("Max auto retry attempts", 3, 15, 8)
 
 if not st.session_state.api_key:
-    st.warning("Please enter and save your API Key in the sidebar")
+    st.warning("Enter your API Key in the sidebar")
     st.stop()
 
 api = OTPDoctor(st.session_state.api_key)
 
-# ==================== BALANCE ====================
-col1, col2 = st.columns([1, 3])
-with col1:
-    if st.button("Check Balance"):
-        bal = api.get_balance()
-        st.success(f"Balance: {bal}")
+# Balance
+if st.button("Check Balance"):
+    st.info(api.get_balance())
 
 st.divider()
 
-# ==================== COUNTRY & SERVICES ====================
-st.subheader("1. Select Country & Load Services")
+# ==================== SERVICES ====================
+st.subheader("1. Country & Services")
 
 country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
 
 if st.button("Load Services"):
-    with st.spinner("Loading services..."):
-        services_raw = api.get_services(country)
-        st.session_state.services_raw = services_raw
+    raw = api.get_services(country)
+    st.session_state.services_raw = raw
 
 if "services_raw" in st.session_state:
-    st.text_area("Raw Services Response (for debugging)", st.session_state.services_raw, height=100)
+    with st.expander("Raw Services Response"):
+        st.code(st.session_state.services_raw)
 
-    # Try to parse services nicely
-    services_dict = {}
+# Service Selection
+st.write("**Select Service**")
+
+manual_id = st.text_input("Enter Service ID manually (Recommended)", placeholder="101, 102, etc.")
+
+# Try to show nice list from API
+service_options = []
+if "services_raw" in st.session_state:
     try:
         data = json.loads(st.session_state.services_raw)
         for sid, info in data.items():
             name = info.get("service_name", sid)
             price = info.get("service_price", "")
-            services_dict[sid] = f"{sid} - {name} ({price})"
+            service_options.append(f"{sid} - {name} ({price})")
     except:
-        # Fallback if not JSON
-        lines = st.session_state.services_raw.replace("{", "").replace("}", "").split(",")
-        for line in lines:
-            if ":" in line:
-                parts = line.split(":")
-                sid = parts[0].strip().strip('"')
-                services_dict[sid] = sid
+        pass
 
-    if services_dict:
-        service_options = list(services_dict.values())
-        selected_display = st.selectbox("Select Service", service_options)
-        # Extract clean service ID
-        selected_service = selected_display.split(" - ")[0].strip()
-    else:
-        selected_service = st.text_input("Enter Service ID manually (e.g. 101)")
+if service_options:
+    selected = st.selectbox("Or select from list", service_options)
+    auto_id = selected.split(" - ")[0].strip()
 else:
-    selected_service = st.text_input("Enter Service ID manually (e.g. 101)")
+    auto_id = ""
 
-# ==================== GET NUMBER ====================
-st.subheader("2. Get Virtual Number")
+# Final service ID
+final_service = manual_id if manual_id else auto_id
 
-if st.button("Get New Number", type="primary"):
-    if not selected_service:
-        st.error("Please select or enter a Service ID")
-    else:
-        with st.spinner("Buying number..."):
-            response = api.get_number(selected_service, country=country)
-        
-        st.write(f"API Response: `{response}`")  # For debugging
+if final_service:
+    st.success(f"Using Service ID: **{final_service}**")
 
-        if response.startswith("ACCESS_NUMBER"):
-            parts = response.split(":")
-            new_num = {
-                "time": datetime.now(),
-                "service": selected_service,
-                "phone": parts[2],
-                "activation_id": parts[1],
-                "otp": None,
-                "status": "Waiting"
-            }
-            st.session_state.numbers.append(new_num)
-            st.success(f"✅ Number purchased: {parts[2]}")
+# ==================== GET NUMBER (NORMAL + AUTO RETRY) ====================
+st.subheader("2. Get Number")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("Get New Number (Single Try)"):
+        if not final_service:
+            st.error("Please enter/select a Service ID")
         else:
-            st.error(f"Failed to get number. Response: {response}")
+            response = api.get_number(final_service, country=country)
+            st.write(f"Response: `{response}`")
 
-# ==================== NUMBERS LIST ====================
+            if response.startswith("ACCESS_NUMBER"):
+                parts = response.split(":")
+                st.session_state.numbers.append({
+                    "time": datetime.now(),
+                    "service": final_service,
+                    "phone": parts[2],
+                    "activation_id": parts[1],
+                    "otp": None,
+                    "status": "Waiting"
+                })
+                st.success(f"✅ Got number: {parts[2]}")
+            else:
+                st.error(f"Failed: {response}")
+
+with col2:
+    if st.button("Auto Retry Until Number Available"):
+        if not final_service:
+            st.error("Enter Service ID first")
+        else:
+            st.write("Starting auto retry...")
+            progress = st.progress(0)
+            status_text = st.empty()
+
+            for attempt in range(1, max_auto_attempts + 1):
+                status_text.write(f"Attempt {attempt}/{max_auto_attempts}...")
+                response = api.get_number(final_service, country=country)
+
+                if response.startswith("ACCESS_NUMBER"):
+                    parts = response.split(":")
+                    st.session_state.numbers.append({
+                        "time": datetime.now(),
+                        "service": final_service,
+                        "phone": parts[2],
+                        "activation_id": parts[1],
+                        "otp": None,
+                        "status": "Waiting"
+                    })
+                    st.success(f"✅ Success on attempt {attempt}! Number: {parts[2]}")
+                    progress.progress(100)
+                    break
+                else:
+                    progress.progress(int((attempt / max_auto_attempts) * 100))
+                    if attempt < max_auto_attempts:
+                        time.sleep(3)  # wait 3 seconds before next try
+                    else:
+                        st.error(f"Failed after {max_auto_attempts} attempts. Last response: {response}")
+
+# ==================== YOUR NUMBERS ====================
 st.subheader("3. Your Numbers")
 
 if not st.session_state.numbers:
-    st.info("No numbers purchased yet.")
+    st.info("No numbers yet.")
 else:
     for i, num in enumerate(st.session_state.numbers):
-        time_elapsed = (datetime.now() - num["time"]).seconds
-        remaining = max_wait - time_elapsed
+        elapsed = (datetime.now() - num["time"]).seconds
+        remaining = max_wait - elapsed
 
-        with st.expander(f"📱 {num['phone']} | Service: {num['service']}", expanded=True):
+        with st.expander(f"📱 {num['phone']} | {num['service']}", expanded=True):
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
-            st.write(f"**Time Elapsed:** {time_elapsed} sec")
+            st.write(f"**Time Elapsed:** {elapsed} sec")
 
             if num["otp"]:
-                st.success(f"**OTP:** {num['otp']}")
-                st.code(num['otp'])
+                st.success(f"OTP: {num['otp']}")
+                st.code(num["otp"])
             else:
                 if remaining > 0:
-                    st.warning(f"Waiting for OTP... ({remaining}s remaining)")
+                    st.warning(f"Waiting... {remaining}s remaining")
                 else:
                     st.error("Time limit reached!")
 
-                c1, c2, c3 = st.columns(3)
+                c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Check OTP", key=f"check_{i}"):
-                        status_resp = api.get_status(num["activation_id"])
-                        st.write(status_resp)
-                        if "STATUS_OK" in status_resp:
-                            match = re.search(r'\b(\d{4,8})\b', status_resp)
+                        status = api.get_status(num["activation_id"])
+                        st.write(status)
+                        if "STATUS_OK" in status:
+                            match = re.search(r'\b(\d{4,8})\b', status)
                             if match:
                                 num["otp"] = match.group(1)
                                 num["status"] = "OTP Received"
                 with c2:
-                    if st.button("Cancel", key=f"cancel_{i}"):
+                    if st.button("Cancel Number", key=f"cancel_{i}"):
                         api.set_status(num["activation_id"], 8)
                         num["status"] = "Cancelled"
-                        st.warning("Number cancelled")
-                with c3:
-                    if remaining <= 0 and st.button("Cancel (Timeout)", key=f"timeout_{i}"):
-                        api.set_status(num["activation_id"], 8)
-                        num["status"] = "Auto Cancelled"
+                        st.warning("Cancelled")
 
-st.caption("Tip: You can buy multiple numbers for the same service.")
+st.caption("Tip: Use 'Auto Retry' when numbers are limited for a service.")
