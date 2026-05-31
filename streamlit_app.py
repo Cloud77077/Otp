@@ -2,14 +2,12 @@ import streamlit as st
 import requests
 import re
 import time
-import json
 from datetime import datetime
 from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
 st.title("🔐 OTP Doctor Automation Tool")
 
-# ==================== API ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -24,13 +22,6 @@ class OTPDoctor:
 
     def get_balance(self):
         return self._get({"action": "getBalance", "api_key": self.api_key})
-
-    def get_services(self, country):
-        return self._get({
-            "action": "getServices",
-            "api_key": self.api_key,
-            "country": country
-        })
 
     def get_number(self, service, country="in"):
         return self._get({
@@ -55,25 +46,37 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== REBTEL AUTO OPERATOR CHECK ====================
+# ==================== IMPROVED REBTEL DETECTION ====================
 def get_operator_rebtel(phone):
     try:
         clean = phone.replace("+91", "").strip()
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=8)
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        resp = requests.get(url, headers=headers, timeout=10)
         
         if resp.status_code != 200:
             return "Check failed"
         
-        text = BeautifulSoup(resp.text, "html.parser").get_text().lower()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text().lower()
         
-        if "jio" in text: return "Jio"
-        if "airtel" in text: return "Airtel"
-        if "vi" in text or "vodafone" in text or "idea" in text: return "Vi"
-        if "bsnl" in text: return "BSNL"
+        # Better detection
+        if "bsnl" in text:
+            return "BSNL"
+        if "jio" in text:
+            return "Jio"
+        if "airtel" in text:
+            return "Airtel"
+        if "vi " in text or "vodafone" in text or "idea" in text:
+            return "Vi"
+        
         return "Unknown"
-    except:
+        
+    except Exception as e:
         return "Error"
 
 # ==================== SESSION ====================
@@ -100,38 +103,10 @@ if st.button("Check Balance"):
 
 st.divider()
 
-# ==================== SERVICES ====================
-st.subheader("1. Services")
+st.subheader("Service ID")
+service_id = st.text_input("Enter Service ID (e.g. 101)", placeholder="101")
 
-country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
-
-if st.button("Load Services"):
-    with st.spinner("Loading services..."):
-        raw = api.get_services(country)
-        st.session_state.services_raw = raw
-
-# Show services nicely if loaded
-if "services_raw" in st.session_state:
-    try:
-        data = json.loads(st.session_state.services_raw)
-        service_list = []
-        for sid, info in data.items():
-            name = info.get("service_name", sid)
-            price = info.get("service_price", "")
-            service_list.append(f"{sid} - {name} ({price})")
-        
-        if service_list:
-            st.write("**Available Services:**")
-            st.selectbox("Select from list (copy ID)", service_list, key="service_list")
-    except:
-        # If not JSON, show raw in expander
-        with st.expander("Services from API (Raw)"):
-            st.code(st.session_state.services_raw)
-
-service_id = st.text_input("Service ID (Manual - Recommended)", placeholder="101")
-
-# ==================== GET NUMBER ====================
-st.subheader("2. Get Number")
+st.subheader("Get Number")
 
 col1, col2 = st.columns(2)
 
@@ -147,8 +122,7 @@ with col1:
                 parts = response.split(":")
                 phone = parts[2]
                 
-                # Auto Rebtel check
-                with st.spinner("Checking operator via Rebtel..."):
+                with st.spinner("Checking operator..."):
                     operator = get_operator_rebtel(phone)
                 
                 st.session_state.numbers.append({
@@ -161,8 +135,6 @@ with col1:
                     "operator": operator
                 })
                 st.success(f"Got: {phone} | Operator: {operator}")
-            else:
-                st.error(f"Failed: {response}")
 
 with col2:
     if st.button("Auto Retry Until Success"):
@@ -194,8 +166,8 @@ with col2:
                     break
                 time.sleep(2)
 
-# ==================== YOUR NUMBERS ====================
-st.subheader("3. Your Numbers")
+# Show Numbers
+st.subheader("Your Numbers")
 
 if not st.session_state.numbers:
     st.info("No numbers yet")
@@ -205,6 +177,11 @@ else:
             st.write(f"**Operator:** {num.get('operator', 'Not checked')}")
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
+
+            # Direct link to Rebtel
+            clean_num = num['phone'].replace("+91", "")
+            rebtel_url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean_num}"
+            st.markdown(f"[Open in Rebtel]({rebtel_url})", unsafe_allow_html=True)
 
             if num["otp"]:
                 st.success(f"OTP: {num['otp']}")
@@ -221,5 +198,3 @@ else:
                 api.set_status(num["activation_id"], 8)
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
-
-st.caption("Operator is checked automatically via Rebtel when you get a number.")
