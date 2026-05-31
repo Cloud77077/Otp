@@ -1,3 +1,4 @@
+
 import streamlit as st
 import requests
 import re
@@ -54,8 +55,8 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL DETECTION ====================
-def get_operator_rebtel(phone):
+# ==================== REBTEL LOGO + OPERATOR DETECTION ====================
+def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
         if clean.startswith("91") and len(clean) > 10:
@@ -66,56 +67,42 @@ def get_operator_rebtel(phone):
         resp = requests.get(url, headers=headers, timeout=12)
 
         if resp.status_code != 200:
-            return "Check failed"
+            return {"operator": "Check failed", "logo_url": None}
 
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Try to find operator logo
+        logo_url = None
+        for img in soup.find_all("img"):
+            src = img.get("src", "").lower()
+            alt = img.get("alt", "").lower()
+            title = img.get("title", "").lower()
+
+            if any(x in src + alt + title for x in ["airtel", "jio", "bsnl", "vi", "vodafone", "idea"]):
+                if img.get("src"):
+                    logo_url = img.get("src")
+                    if not logo_url.startswith("http"):
+                        logo_url = "https://www.rebtel.com" + logo_url
+                    break
+
+        # Detect operator name
         text = soup.get_text().lower()
         raw = resp.text.lower()
 
-        # Priority order
+        operator = "Unknown"
         if "airtel" in text or "airtel" in raw:
-            return "Airtel"
-        if "jio" in text or "jio" in raw:
-            return "Jio"
-        if "bsnl" in text or "bsnl" in raw:
-            return "BSNL"
-        if "vi" in text or "vodafone" in text or "idea" in text:
-            return "Vi"
+            operator = "Airtel"
+        elif "jio" in text or "jio" in raw:
+            operator = "Jio"
+        elif "bsnl" in text or "bsnl" in raw:
+            operator = "BSNL"
+        elif "vi" in text or "vodafone" in text or "idea" in text:
+            operator = "Vi"
 
-        return "Unknown"
+        return {"operator": operator, "logo_url": logo_url}
+
     except:
-        return "Error"
-
-def get_rebtel_preview(phone):
-    """Fetch basic preview from Rebtel"""
-    try:
-        clean = phone.replace("+", "").replace(" ", "").strip()
-        if clean.startswith("91") and len(clean) > 10:
-            clean = clean[2:]
-
-        url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=12)
-
-        if resp.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        text = soup.get_text()
-
-        # Try to extract top plan info
-        preview = {
-            "operator": get_operator_rebtel(phone),
-            "title": "Rebtel Recharge"
-        }
-
-        # Look for plan name
-        if "Popular" in text:
-            preview["note"] = "Popular plan available"
-        
-        return preview
-    except:
-        return None
+        return {"operator": "Error", "logo_url": None}
 
 # ==================== SESSION ====================
 if "numbers" not in st.session_state:
@@ -184,8 +171,8 @@ with col1:
                 parts = response.split(":")
                 phone = parts[2]
                 
-                with st.spinner("Checking operator..."):
-                    operator = get_operator_rebtel(phone)
+                with st.spinner("Checking Rebtel..."):
+                    info = get_rebtel_info(phone)
                 
                 st.session_state.numbers.append({
                     "time": datetime.now(),
@@ -194,9 +181,10 @@ with col1:
                     "activation_id": parts[1],
                     "otp": None,
                     "status": "Waiting",
-                    "operator": operator
+                    "operator": info["operator"],
+                    "logo_url": info["logo_url"]
                 })
-                st.success(f"Got: {phone} | Operator: {operator}")
+                st.success(f"Got: {phone} | Operator: {info['operator']}")
 
 with col2:
     if st.button("Auto Retry Until Success"):
@@ -212,8 +200,8 @@ with col2:
                     parts = response.split(":")
                     phone = parts[2]
                     
-                    with st.spinner("Checking operator..."):
-                        operator = get_operator_rebtel(phone)
+                    with st.spinner("Checking Rebtel..."):
+                        info = get_rebtel_info(phone)
                     
                     st.session_state.numbers.append({
                         "time": datetime.now(),
@@ -222,9 +210,10 @@ with col2:
                         "activation_id": parts[1],
                         "otp": None,
                         "status": "Waiting",
-                        "operator": operator
+                        "operator": info["operator"],
+                        "logo_url": info["logo_url"]
                     })
-                    st.success(f"Success! {phone} | {operator}")
+                    st.success(f"Success! {phone} | {info['operator']}")
                     break
                 time.sleep(2)
 
@@ -237,34 +226,31 @@ else:
     for i, num in enumerate(st.session_state.numbers):
         with st.expander(f"📱 {num['phone']} | {num['service']}", expanded=True):
             
-            # Badge
-            operator = num.get('operator', 'Unknown')
-            if operator == "Airtel":
-                st.markdown(f"**Operator:** <span style='background-color:#FF0000;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Airtel</span>", unsafe_allow_html=True)
-            elif operator == "Jio":
-                st.markdown(f"**Operator:** <span style='background-color:#00A8E8;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Jio</span>", unsafe_allow_html=True)
-            elif operator == "BSNL":
-                st.markdown(f"**Operator:** <span style='background-color:#228B22;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>BSNL</span>", unsafe_allow_html=True)
-            elif operator == "Vi":
-                st.markdown(f"**Operator:** <span style='background-color:#FF6600;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Vi</span>", unsafe_allow_html=True)
-            else:
-                st.write(f"**Operator:** {operator}")
+            # Show Logo if available
+            if num.get("logo_url"):
+                try:
+                    st.image(num["logo_url"], width=100)
+                except:
+                    pass
+            
+            # Fallback badge
+            operator = num.get("operator", "Unknown")
+            if not num.get("logo_url"):
+                if operator == "Airtel":
+                    st.markdown(f"**Operator:** <span style='background-color:#FF0000;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Airtel</span>", unsafe_allow_html=True)
+                elif operator == "Jio":
+                    st.markdown(f"**Operator:** <span style='background-color:#00A8E8;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Jio</span>", unsafe_allow_html=True)
+                elif operator == "BSNL":
+                    st.markdown(f"**Operator:** <span style='background-color:#228B22;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>BSNL</span>", unsafe_allow_html=True)
+                elif operator == "Vi":
+                    st.markdown(f"**Operator:** <span style='background-color:#FF6600;color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>Vi</span>", unsafe_allow_html=True)
+                else:
+                    st.write(f"**Operator:** {operator}")
 
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
 
-            # Rebtel Preview Button
-            if st.button("Show Rebtel Preview", key=f"preview_{i}"):
-                with st.spinner("Loading preview from Rebtel..."):
-                    preview = get_rebtel_preview(num['phone'])
-                    if preview:
-                        st.info(f"**Operator:** {preview.get('operator', 'Unknown')}")
-                        if "note" in preview:
-                            st.write(preview["note"])
-                    else:
-                        st.warning("Could not load preview")
-
-            # Direct Link
+            # Rebtel link
             clean = num['phone'].replace("+", "").replace(" ", "")
             if clean.startswith("91") and len(clean) > 10:
                 clean = clean[2:]
@@ -287,4 +273,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Operator checked automatically. Use 'Show Rebtel Preview' for more details.")
+st.caption("Logo is extracted from Rebtel when available. Badge shown as fallback.")
