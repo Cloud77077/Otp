@@ -54,7 +54,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL DETECTION (Logo + Text) ====================
+# ==================== AGGRESSIVE REBTEL DETECTION ====================
 def get_operator_rebtel(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -62,31 +62,27 @@ def get_operator_rebtel(phone):
             clean = clean[2:]
 
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        resp = requests.get(url, headers=headers, timeout=12)
 
         if resp.status_code != 200:
             return "Check failed"
 
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Search in full page text + image alt/title tags (for logos)
+        
+        # Search in text + image attributes + raw HTML
         full_text = soup.get_text().lower()
-        img_alts = " ".join([img.get("alt", "") + " " + img.get("title", "") 
-                             for img in soup.find_all("img")]).lower()
+        img_text = " ".join([str(img) for img in soup.find_all("img")]).lower()
+        raw_html = resp.text.lower()
+        
+        combined = full_text + " " + img_text + " " + raw_html
 
-        combined = full_text + " " + img_alts
+        if "bsnl" in combined: return "BSNL"
+        if "jio" in combined: return "Jio"
+        if "airtel" in combined: return "Airtel"
+        if "vi" in combined or "vodafone" in combined or "idea" in combined: return "Vi"
 
-        if "bsnl" in combined:
-            return "BSNL"
-        if "jio" in combined:
-            return "Jio"
-        if "airtel" in combined:
-            return "Airtel"
-        if "vi" in combined or "vodafone" in combined or "idea" in combined:
-            return "Vi"
-
-        return "Unknown"
+        return "Unknown (check manually)"
     except:
         return "Error"
 
@@ -235,4 +231,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Operator is checked automatically via Rebtel (now detects from logo + text).")
+st.caption("Operator checked automatically via Rebtel. Click the link if it shows Unknown.")
