@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
 st.title("🔐 OTP Doctor Automation Tool")
 
-# ==================== API ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -55,34 +54,38 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL DETECTION ====================
+# ==================== IMPROVED REBTEL DETECTION (Logo + Text) ====================
 def get_operator_rebtel(phone):
     try:
-        # Normalize number (handle both 91xxxxxxxxxx and xxxxxxxxxx)
         clean = phone.replace("+", "").replace(" ", "").strip()
-        
         if clean.startswith("91") and len(clean) > 10:
-            clean = clean[2:]   # remove leading 91
-        
+            clean = clean[2:]
+
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
-        
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
-        
+
         if resp.status_code != 200:
             return "Check failed"
-        
-        text = BeautifulSoup(resp.text, "html.parser").get_text().lower()
-        
-        if "bsnl" in text:
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Search in full page text + image alt/title tags (for logos)
+        full_text = soup.get_text().lower()
+        img_alts = " ".join([img.get("alt", "") + " " + img.get("title", "") 
+                             for img in soup.find_all("img")]).lower()
+
+        combined = full_text + " " + img_alts
+
+        if "bsnl" in combined:
             return "BSNL"
-        if "jio" in text:
+        if "jio" in combined:
             return "Jio"
-        if "airtel" in text:
+        if "airtel" in combined:
             return "Airtel"
-        if "vi" in text or "vodafone" in text or "idea" in text:
+        if "vi" in combined or "vodafone" in combined or "idea" in combined:
             return "Vi"
-        
+
         return "Unknown"
     except:
         return "Error"
@@ -210,7 +213,6 @@ else:
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
 
-            # Direct Rebtel link
             clean = num['phone'].replace("+", "").replace(" ", "")
             if clean.startswith("91") and len(clean) > 10:
                 clean = clean[2:]
@@ -233,4 +235,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Operator is checked automatically via Rebtel when you get a number.")
+st.caption("Operator is checked automatically via Rebtel (now detects from logo + text).")
