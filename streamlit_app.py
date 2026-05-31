@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
 st.title("🔐 OTP Doctor Automation Tool")
 
+# ==================== API ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -57,8 +58,14 @@ class OTPDoctor:
 # ==================== IMPROVED REBTEL DETECTION ====================
 def get_operator_rebtel(phone):
     try:
-        clean = phone.replace("+91", "").strip()
+        # Normalize number (handle both 91xxxxxxxxxx and xxxxxxxxxx)
+        clean = phone.replace("+", "").replace(" ", "").strip()
+        
+        if clean.startswith("91") and len(clean) > 10:
+            clean = clean[2:]   # remove leading 91
+        
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
+        
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         
@@ -75,6 +82,7 @@ def get_operator_rebtel(phone):
             return "Airtel"
         if "vi" in text or "vodafone" in text or "idea" in text:
             return "Vi"
+        
         return "Unknown"
     except:
         return "Error"
@@ -109,7 +117,7 @@ st.subheader("1. Services")
 country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
 
 if st.button("Load Services"):
-    with st.spinner("Loading..."):
+    with st.spinner("Loading services..."):
         raw = api.get_services(country)
         st.session_state.services_raw = raw
 
@@ -122,7 +130,7 @@ if "services_raw" in st.session_state:
             price = info.get("service_price", "")
             formatted.append(f"{sid} - {name} ({price})")
         if formatted:
-            st.selectbox("Services (copy the ID you want)", formatted)
+            st.selectbox("Services from API", formatted)
     except:
         with st.expander("Raw Services Response"):
             st.code(st.session_state.services_raw)
@@ -202,8 +210,12 @@ else:
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
 
-            clean = num['phone'].replace("+91", "")
-            st.markdown(f"[Check on Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
+            # Direct Rebtel link
+            clean = num['phone'].replace("+", "").replace(" ", "")
+            if clean.startswith("91") and len(clean) > 10:
+                clean = clean[2:]
+            rebtel_link = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
+            st.markdown(f"[Open in Rebtel]({rebtel_link})")
 
             if num["otp"]:
                 st.success(f"OTP: {num['otp']}")
@@ -221,4 +233,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Operator is checked automatically via Rebtel.")
+st.caption("Operator is checked automatically via Rebtel when you get a number.")
