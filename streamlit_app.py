@@ -54,7 +54,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL DETECTION ====================
+# ==================== IMPROVED REBTEL TEXT + LOGO DETECTION ====================
 def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -72,7 +72,7 @@ def get_rebtel_info(phone):
         text = soup.get_text().lower()
         raw = resp.text.lower()
 
-        # First priority: Logo detection (most reliable)
+        # Try to find logo first (most reliable when available)
         logo_url = None
         for img in soup.find_all("img"):
             src = img.get("src", "").lower()
@@ -94,17 +94,17 @@ def get_rebtel_info(phone):
                     logo_url = "https://www.rebtel.com" + logo_url
                 return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Text detection with strict priority
-        if "jio" in text or "jio" in raw:
+        # Text-based detection with better priority (focus on clear text)
+        if "jio" in text:
             return {"operator": "Jio", "logo_url": logo_url}
-        if "airtel" in text or "airtel" in raw:
+        if "airtel" in text:
             return {"operator": "Airtel", "logo_url": logo_url}
-        if "bsnl" in text or "bsnl" in raw:
+        if "bsnl" in text:
             return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Vi only if it appears very strongly (avoid false positives)
+        # Vi only with strong evidence (to avoid false positives)
         vi_count = text.count("vi ") + text.count("vodafone") + text.count("idea")
-        if vi_count >= 4:   # Higher threshold
+        if vi_count >= 4:
             return {"operator": "Vi", "logo_url": logo_url}
 
         return {"operator": "Unknown", "logo_url": logo_url}
@@ -259,4 +259,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Stricter Vi detection to reduce false positives")
+st.caption("Improved text + logo detection from Rebtel")
