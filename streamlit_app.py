@@ -2,13 +2,14 @@ import streamlit as st
 import requests
 import re
 import time
+import json
 from datetime import datetime
 from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="OTP Doctor Tool", layout="wide")
 st.title("🔐 OTP Doctor Automation Tool")
 
-# ==================== API (Exactly as per your screenshots) ====================
+# ==================== API ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -24,7 +25,7 @@ class OTPDoctor:
     def get_balance(self):
         return self._get({"action": "getBalance", "api_key": self.api_key})
 
-    def get_services(self, country="in"):
+    def get_services(self, country):
         return self._get({
             "action": "getServices",
             "api_key": self.api_key,
@@ -55,12 +56,12 @@ class OTPDoctor:
         })
 
 # ==================== REBTEL AUTO OPERATOR CHECK ====================
-def check_operator_rebtel(phone):
+def get_operator_rebtel(phone):
     try:
         clean = phone.replace("+91", "").strip()
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=12)
+        resp = requests.get(url, headers=headers, timeout=8)
         
         if resp.status_code != 200:
             return "Check failed"
@@ -94,26 +95,40 @@ if not st.session_state.api_key:
 
 api = OTPDoctor(st.session_state.api_key)
 
-# Balance
 if st.button("Check Balance"):
     st.info(api.get_balance())
 
 st.divider()
 
-# ==================== SERVICES (Simple & Reliable) ====================
-st.subheader("1. Load Services")
+# ==================== SERVICES ====================
+st.subheader("1. Services")
 
 country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
 
 if st.button("Load Services"):
-    services = api.get_services(country)
-    st.session_state.services_raw = services
+    with st.spinner("Loading services..."):
+        raw = api.get_services(country)
+        st.session_state.services_raw = raw
 
+# Show services nicely if loaded
 if "services_raw" in st.session_state:
-    with st.expander("Services from API (Raw)"):
-        st.code(st.session_state.services_raw)
+    try:
+        data = json.loads(st.session_state.services_raw)
+        service_list = []
+        for sid, info in data.items():
+            name = info.get("service_name", sid)
+            price = info.get("service_price", "")
+            service_list.append(f"{sid} - {name} ({price})")
+        
+        if service_list:
+            st.write("**Available Services:**")
+            st.selectbox("Select from list (copy ID)", service_list, key="service_list")
+    except:
+        # If not JSON, show raw in expander
+        with st.expander("Services from API (Raw)"):
+            st.code(st.session_state.services_raw)
 
-service_id = st.text_input("Service ID (e.g. 101 for WhatsApp)", placeholder="101")
+service_id = st.text_input("Service ID (Manual - Recommended)", placeholder="101")
 
 # ==================== GET NUMBER ====================
 st.subheader("2. Get Number")
@@ -125,16 +140,16 @@ with col1:
         if not service_id:
             st.error("Enter Service ID")
         else:
-            response = api.get_number(service_id, country)
-            st.write(f"API Response: `{response}`")
+            response = api.get_number(service_id)
+            st.write(f"Response: `{response}`")
 
             if response.startswith("ACCESS_NUMBER"):
                 parts = response.split(":")
                 phone = parts[2]
                 
-                # Auto check operator
+                # Auto Rebtel check
                 with st.spinner("Checking operator via Rebtel..."):
-                    operator = check_operator_rebtel(phone)
+                    operator = get_operator_rebtel(phone)
                 
                 st.session_state.numbers.append({
                     "time": datetime.now(),
@@ -154,14 +169,17 @@ with col2:
         if not service_id:
             st.error("Enter Service ID")
         else:
+            progress = st.progress(0)
             for i in range(8):
-                response = api.get_number(service_id, country)
+                progress.progress(int(((i+1)/8)*100))
+                response = api.get_number(service_id)
+                
                 if response.startswith("ACCESS_NUMBER"):
                     parts = response.split(":")
                     phone = parts[2]
                     
                     with st.spinner("Checking operator..."):
-                        operator = check_operator_rebtel(phone)
+                        operator = get_operator_rebtel(phone)
                     
                     st.session_state.numbers.append({
                         "time": datetime.now(),
@@ -172,7 +190,7 @@ with col2:
                         "status": "Waiting",
                         "operator": operator
                     })
-                    st.success(f"Success on try {i+1}! {phone} | {operator}")
+                    st.success(f"Success! {phone} | {operator}")
                     break
                 time.sleep(2)
 
@@ -204,4 +222,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Operator is now checked automatically when you get a number using Rebtel.")
+st.caption("Operator is checked automatically via Rebtel when you get a number.")
