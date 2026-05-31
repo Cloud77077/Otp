@@ -54,7 +54,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL (Logo + Text) ====================
+# ==================== IMPROVED REBTEL DETECTION ====================
 def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -69,34 +69,45 @@ def get_rebtel_info(phone):
             return {"operator": "Check failed", "logo_url": None}
 
         soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text().lower()
+        raw = resp.text.lower()
 
-        # Try to find logo
+        # First priority: Logo detection (most reliable)
         logo_url = None
         for img in soup.find_all("img"):
             src = img.get("src", "").lower()
-            alt = img.get("alt", "").lower() + " " + img.get("title", "").lower()
-            if any(x in src + alt for x in ["jio", "airtel", "bsnl", "vi", "vodafone"]):
+            alt = (img.get("alt", "") + " " + img.get("title", "")).lower()
+            
+            if "jio" in src + alt:
                 logo_url = img.get("src")
-                if logo_url and not logo_url.startswith("http"):
+                if not logo_url.startswith("http"):
                     logo_url = "https://www.rebtel.com" + logo_url
-                break
+                return {"operator": "Jio", "logo_url": logo_url}
+            elif "airtel" in src + alt:
+                logo_url = img.get("src")
+                if not logo_url.startswith("http"):
+                    logo_url = "https://www.rebtel.com" + logo_url
+                return {"operator": "Airtel", "logo_url": logo_url}
+            elif "bsnl" in src + alt:
+                logo_url = img.get("src")
+                if not logo_url.startswith("http"):
+                    logo_url = "https://www.rebtel.com" + logo_url
+                return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Detect operator
-        text = soup.get_text().lower()
-        raw = resp.text.lower()
-        combined = text + " " + raw
+        # Text detection with strict priority
+        if "jio" in text or "jio" in raw:
+            return {"operator": "Jio", "logo_url": logo_url}
+        if "airtel" in text or "airtel" in raw:
+            return {"operator": "Airtel", "logo_url": logo_url}
+        if "bsnl" in text or "bsnl" in raw:
+            return {"operator": "BSNL", "logo_url": logo_url}
 
-        operator = "Unknown"
-        if "jio" in combined:
-            operator = "Jio"
-        elif "airtel" in combined:
-            operator = "Airtel"
-        elif "bsnl" in combined:
-            operator = "BSNL"
-        elif "vi" in combined or "vodafone" in combined or "idea" in combined:
-            operator = "Vi"
+        # Vi only if it appears very strongly (avoid false positives)
+        vi_count = text.count("vi ") + text.count("vodafone") + text.count("idea")
+        if vi_count >= 4:   # Higher threshold
+            return {"operator": "Vi", "logo_url": logo_url}
 
-        return {"operator": operator, "logo_url": logo_url}
+        return {"operator": "Unknown", "logo_url": logo_url}
     except:
         return {"operator": "Error", "logo_url": None}
 
@@ -218,42 +229,34 @@ else:
                     pass
             else:
                 operator = num.get("operator", "Unknown")
-                color = {"Airtel": "#FF0000", "Jio": "#00A8E8", "BSNL": "#228B22", "Vi": "#FF6600"}.get(operator, "#888888")
-                st.markdown(f"**Operator:** <span style='background-color:{color};color:white;padding:4px 10px;border-radius:5px'>{operator}</span>", unsafe_allow_html=True)
+                color = {"Airtel":"#FF0000", "Jio":"#00A8E8", "BSNL":"#228B22", "Vi":"#FF6600"}.get(operator, "#888888")
+                st.markdown(f"**Operator:** <span style='background-color:{color};color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>{operator}</span>", unsafe_allow_html=True)
 
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
 
-            # Rebtel Link
             clean = num['phone'].replace("+", "").replace(" ", "")
             if clean.startswith("91") and len(clean) > 10:
                 clean = clean[2:]
             st.markdown(f"[Open in Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
 
-            # OTP Section with better handling
             if num["otp"]:
                 st.success(f"OTP: {num['otp']}")
+                st.code(num["otp"])
             else:
                 if st.button("Check OTP", key=f"otp_{i}"):
                     status = api.get_status(num["activation_id"])
-                    st.write(f"Raw Response: `{status}`")   # For debugging
-                    
+                    st.write(f"Raw Response: `{status}`")
                     if "STATUS_OK" in status:
                         match = re.search(r'\b(\d{4,8})\b', status)
                         if match:
                             num["otp"] = match.group(1)
                             num["status"] = "OTP Received"
                             st.success(f"OTP Found: {num['otp']}")
-                        else:
-                            st.info("OTP received but couldn't extract code. Raw: " + status)
-                    elif "STATUS_WAIT" in status:
-                        st.warning("Still waiting for OTP...")
-                    else:
-                        st.error(f"Status: {status}")
 
             if st.button("Cancel Number", key=f"cancel_{i}"):
                 api.set_status(num["activation_id"], 8)
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Improved Rebtel detection + Better OTP handling")
+st.caption("Stricter Vi detection to reduce false positives")
