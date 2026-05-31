@@ -54,7 +54,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL TEXT + LOGO DETECTION ====================
+# ==================== TARGETED REBTEL DETECTION ====================
 def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -69,15 +69,12 @@ def get_rebtel_info(phone):
             return {"operator": "Check failed", "logo_url": None}
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        text = soup.get_text().lower()
-        raw = resp.text.lower()
 
-        # Try to find logo first (most reliable when available)
+        # 1. Try to find logo first (most reliable)
         logo_url = None
         for img in soup.find_all("img"):
             src = img.get("src", "").lower()
             alt = (img.get("alt", "") + " " + img.get("title", "")).lower()
-            
             if "jio" in src + alt:
                 logo_url = img.get("src")
                 if not logo_url.startswith("http"):
@@ -94,7 +91,12 @@ def get_rebtel_info(phone):
                     logo_url = "https://www.rebtel.com" + logo_url
                 return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Text-based detection with better priority (focus on clear text)
+        # 2. Targeted text search (headings + main content first)
+        headings = " ".join([h.get_text() for h in soup.find_all(["h1", "h2", "h3"])]).lower()
+        main_content = " ".join([div.get_text() for div in soup.find_all("div", class_=True) if "plan" in str(div.get("class", "")).lower()]).lower()
+        
+        text = (headings + " " + main_content + " " + soup.get_text()).lower()
+
         if "jio" in text:
             return {"operator": "Jio", "logo_url": logo_url}
         if "airtel" in text:
@@ -102,7 +104,7 @@ def get_rebtel_info(phone):
         if "bsnl" in text:
             return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Vi only with strong evidence (to avoid false positives)
+        # Vi only with very strong evidence
         vi_count = text.count("vi ") + text.count("vodafone") + text.count("idea")
         if vi_count >= 4:
             return {"operator": "Vi", "logo_url": logo_url}
@@ -259,4 +261,4 @@ else:
                 num["status"] = "Cancelled"
                 st.warning("Cancelled")
 
-st.caption("Improved text + logo detection from Rebtel")
+st.caption("Targeted Rebtel detection (headings + main content first)")
