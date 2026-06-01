@@ -6,9 +6,12 @@ import json
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-st.set_page_config(page_title="OTP Automation Tool", layout="wide")
-st.title("🔐 OTP Automation Tool")
+st.set_page_config(page_title="OTP Tool", layout="wide", page_icon="🔐")
 
+st.title("🔐 OTP Automation Tool")
+st.markdown("**Buy virtual numbers & check OTPs easily**")
+
+# ==================== API CLASS ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -54,7 +57,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== IMPROVED REBTEL DETECTION ====================
+# ==================== REBTEL DETECTION ====================
 def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -70,7 +73,6 @@ def get_rebtel_info(phone):
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Try logo first
         logo_url = None
         for img in soup.find_all("img"):
             src = img.get("src", "").lower()
@@ -91,7 +93,6 @@ def get_rebtel_info(phone):
                     logo_url = "https://www.rebtel.com" + logo_url
                 return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Targeted text detection
         headings = " ".join([h.get_text() for h in soup.find_all(["h1", "h2", "h3"])]).lower()
         text = (headings + " " + soup.get_text()).lower()
 
@@ -102,7 +103,6 @@ def get_rebtel_info(phone):
         if "bsnl" in text:
             return {"operator": "BSNL", "logo_url": logo_url}
 
-        # Strict Vi detection
         vi_count = text.count("vi ") + text.count("vodafone") + text.count("idea")
         if vi_count >= 4:
             return {"operator": "Vi", "logo_url": logo_url}
@@ -111,62 +111,69 @@ def get_rebtel_info(phone):
     except:
         return {"operator": "Error", "logo_url": None}
 
-# ==================== SESSION STATE ====================
+# ==================== SESSION ====================
 if "numbers" not in st.session_state:
     st.session_state.numbers = []
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
 with st.sidebar:
-    st.header("Settings")
-    api_key = st.text_input("API Key", type="password", value=st.session_state.api_key)
-    if st.button("Save Key"):
+    st.header("⚙️ Settings")
+    api_key = st.text_input("Your API Key", type="password", value=st.session_state.api_key)
+    if st.button("Save API Key"):
         st.session_state.api_key = api_key
-        st.success("Key saved")
+        st.success("API Key saved!")
 
 if not st.session_state.api_key:
-    st.warning("Please enter your API Key in the sidebar")
+    st.warning("Please enter and save your API Key in the sidebar to continue.")
     st.stop()
 
 api = OTPDoctor(st.session_state.api_key)
 
-if st.button("Check Balance"):
-    st.info(api.get_balance())
+# Balance
+col1, col2 = st.columns([1, 3])
+with col1:
+    if st.button("Check Balance"):
+        balance = api.get_balance()
+        st.info(f"Balance: {balance}")
 
 st.divider()
 
-# ==================== SERVICES ====================
-st.subheader("1. Services")
+# ==================== SECTION 1: SERVICES ====================
+st.subheader("1️⃣ Load Services")
 
-country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
+with st.container(border=True):
+    country = st.selectbox("Select Country", ["in", "us", "uk", "za", "iq"], index=0)
+    if st.button("Load Services"):
+        with st.spinner("Loading services..."):
+            raw = api.get_services(country)
+            st.session_state.services_raw = raw
+            st.success("Services loaded successfully!")
 
-if st.button("Load Services"):
-    with st.spinner("Loading services..."):
-        raw = api.get_services(country)
-        st.session_state.services_raw = raw
+    if "services_raw" in st.session_state:
+        try:
+            data = json.loads(st.session_state.services_raw)
+            formatted = [f"{sid} - {info.get('service_name', sid)} ({info.get('service_price', '')})" 
+                         for sid, info in data.items()]
+            if formatted:
+                st.selectbox("Available Services", formatted)
+        except:
+            with st.expander("View Raw Services"):
+                st.code(st.session_state.services_raw)
 
-if "services_raw" in st.session_state:
-    try:
-        data = json.loads(st.session_state.services_raw)
-        formatted = [f"{sid} - {info.get('service_name', sid)} ({info.get('service_price', '')})" 
-                     for sid, info in data.items()]
-        if formatted:
-            st.selectbox("Available Services", formatted)
-    except:
-        with st.expander("Raw Services Response"):
-            st.code(st.session_state.services_raw)
+service_id = st.text_input("Enter Service ID (Example: 101)", placeholder="101")
 
-service_id = st.text_input("Service ID (e.g. 101)", placeholder="101")
+st.divider()
 
-# ==================== GET NUMBER ====================
-st.subheader("2. Get Number")
+# ==================== SECTION 2: GET NUMBER ====================
+st.subheader("2️⃣ Get Virtual Number")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("Get New Number"):
+    if st.button("Get New Number", type="primary", use_container_width=True):
         if not service_id:
-            st.error("Please enter Service ID")
+            st.error("Please enter a Service ID")
         else:
             response = api.get_number(service_id)
             if response.startswith("ACCESS_NUMBER"):
@@ -184,14 +191,18 @@ with col1:
                     "operator": info["operator"],
                     "logo_url": info["logo_url"]
                 })
-                st.success(f"Number received: {phone}")
+                st.success(f"Number purchased successfully: {phone}")
+            else:
+                st.error(f"Failed to get number. Response: {response}")
 
 with col2:
-    if st.button("Auto Retry Until Success"):
+    if st.button("Auto Retry Until Success", use_container_width=True):
         if not service_id:
-            st.error("Please enter Service ID")
+            st.error("Please enter a Service ID")
         else:
-            for _ in range(8):
+            progress = st.progress(0)
+            for i in range(8):
+                progress.progress(int(((i + 1) / 8) * 100))
                 response = api.get_number(service_id)
                 if response.startswith("ACCESS_NUMBER"):
                     parts = response.split(":")
@@ -208,57 +219,58 @@ with col2:
                         "operator": info["operator"],
                         "logo_url": info["logo_url"]
                     })
-                    st.success(f"Success! Number: {phone}")
+                    st.success(f"Number received after {i+1} attempts: {phone}")
                     break
                 time.sleep(2)
 
-# ==================== YOUR NUMBERS ====================
-st.subheader("3. Your Numbers")
+st.divider()
+
+# ==================== SECTION 3: YOUR NUMBERS ====================
+st.subheader("3️⃣ Your Purchased Numbers")
 
 if not st.session_state.numbers:
-    st.info("No numbers purchased yet.")
+    st.info("No numbers purchased yet. Get a number from Section 2 above.")
 else:
     for i, num in enumerate(st.session_state.numbers):
-        with st.expander(f"📱 {num['phone']} | Service: {num['service']}", expanded=True):
+        with st.container(border=True):
+            col_left, col_right = st.columns([3, 1])
             
-            # Operator Display
-            if num.get("logo_url"):
-                try:
-                    st.image(num["logo_url"], width=90)
-                except:
-                    pass
-            else:
-                operator = num.get("operator", "Unknown")
-                color = {"Airtel":"#FF0000", "Jio":"#00A8E8", "BSNL":"#228B22", "Vi":"#FF6600"}.get(operator, "#888888")
-                st.markdown(f"**Operator:** <span style='background-color:{color};color:white;padding:4px 10px;border-radius:5px;font-weight:bold'>{operator}</span>", unsafe_allow_html=True)
+            with col_left:
+                st.write(f"**Phone:** {num['phone']}")
+                st.write(f"**Service ID:** {num['service']}")
+                st.write(f"**Activation ID:** `{num['activation_id']}`")
+                st.write(f"**Status:** {num['status']}")
 
-            st.write(f"**Activation ID:** `{num['activation_id']}`")
-            st.write(f"**Status:** {num['status']}")
+                # Operator
+                if num.get("logo_url"):
+                    try:
+                        st.image(num["logo_url"], width=80)
+                    except:
+                        pass
+                else:
+                    operator = num.get("operator", "Unknown")
+                    color = {"Airtel":"#FF0000", "Jio":"#00A8E8", "BSNL":"#228B22", "Vi":"#FF6600"}.get(operator, "#888888")
+                    st.markdown(f"**Operator:** <span style='background-color:{color};color:white;padding:3px 8px;border-radius:4px'>{operator}</span>", unsafe_allow_html=True)
 
-            # Rebtel Link
-            clean = num['phone'].replace("+", "").replace(" ", "")
-            if clean.startswith("91") and len(clean) > 10:
-                clean = clean[2:]
-            st.markdown(f"[Open in Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
-
-            # OTP Section
-            if num["otp"]:
-                st.success(f"OTP: {num['otp']}")
-                st.code(num["otp"])
-            else:
-                if st.button("Check OTP", key=f"otp_{i}"):
+            with col_right:
+                if st.button("Check OTP", key=f"otp_{i}", use_container_width=True):
                     status = api.get_status(num["activation_id"])
-                    st.write(f"Raw Response: `{status}`")
+                    st.write(f"Raw: `{status}`")
                     if "STATUS_OK" in status:
                         match = re.search(r'\b(\d{4,8})\b', status)
                         if match:
                             num["otp"] = match.group(1)
                             num["status"] = "OTP Received"
-                            st.success(f"OTP Found: {num['otp']}")
+                            st.success(f"OTP: {num['otp']}")
 
-            if st.button("Cancel Number", key=f"cancel_{i}"):
-                api.set_status(num["activation_id"], 8)
-                num["status"] = "Cancelled"
-                st.warning("Number cancelled")
+                if st.button("Cancel", key=f"cancel_{i}", use_container_width=True):
+                    api.set_status(num["activation_id"], 8)
+                    num["status"] = "Cancelled"
+                    st.warning("Number cancelled")
 
-st.caption("Improved Rebtel detection + Better OTP handling")
+                clean = num['phone'].replace("+", "").replace(" ", "")
+                if clean.startswith("91") and len(clean) > 10:
+                    clean = clean[2:]
+                st.markdown(f"[View on Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
+
+st.caption("Tip: Use 'Auto Retry' when numbers are not immediately available.")
