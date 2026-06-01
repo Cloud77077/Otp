@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="OTP Tool", layout="wide", page_icon="🔐")
 
 st.title("🔐 OTP Automation Tool")
-st.markdown("**Buy virtual numbers & check OTPs easily**")
+st.markdown("**Buy virtual numbers and receive OTPs easily**")
 
 # ==================== API CLASS ====================
 class OTPDoctor:
@@ -125,55 +125,50 @@ with st.sidebar:
         st.success("API Key saved!")
 
 if not st.session_state.api_key:
-    st.warning("Please enter and save your API Key in the sidebar to continue.")
+    st.warning("Please enter your API Key in the sidebar.")
     st.stop()
 
 api = OTPDoctor(st.session_state.api_key)
 
 # Balance
-col1, col2 = st.columns([1, 3])
-with col1:
-    if st.button("Check Balance"):
-        balance = api.get_balance()
-        st.info(f"Balance: {balance}")
+if st.button("Check Balance"):
+    st.info(api.get_balance())
 
 st.divider()
 
 # ==================== SECTION 1: SERVICES ====================
-st.subheader("1️⃣ Load Services")
+st.subheader("1️⃣ Services")
 
 with st.container(border=True):
-    country = st.selectbox("Select Country", ["in", "us", "uk", "za", "iq"], index=0)
+    country = st.selectbox("Country", ["in", "us", "uk", "za", "iq"], index=0)
+    
     if st.button("Load Services"):
-        with st.spinner("Loading services..."):
+        with st.spinner("Loading..."):
             raw = api.get_services(country)
             st.session_state.services_raw = raw
-            st.success("Services loaded successfully!")
-
+    
     if "services_raw" in st.session_state:
         try:
             data = json.loads(st.session_state.services_raw)
             formatted = [f"{sid} - {info.get('service_name', sid)} ({info.get('service_price', '')})" 
                          for sid, info in data.items()]
-            if formatted:
-                st.selectbox("Available Services", formatted)
+            st.selectbox("Available Services", formatted)
         except:
-            with st.expander("View Raw Services"):
+            with st.expander("Raw Services"):
                 st.code(st.session_state.services_raw)
 
-service_id = st.text_input("Enter Service ID (Example: 101)", placeholder="101")
+service_id = st.text_input("Service ID", placeholder="101")
 
 st.divider()
 
 # ==================== SECTION 2: GET NUMBER ====================
-st.subheader("2️⃣ Get Virtual Number")
+st.subheader("2️⃣ Get Number")
 
 col1, col2 = st.columns(2)
-
 with col1:
     if st.button("Get New Number", type="primary", use_container_width=True):
         if not service_id:
-            st.error("Please enter a Service ID")
+            st.error("Please enter Service ID")
         else:
             response = api.get_number(service_id)
             if response.startswith("ACCESS_NUMBER"):
@@ -191,18 +186,18 @@ with col1:
                     "operator": info["operator"],
                     "logo_url": info["logo_url"]
                 })
-                st.success(f"Number purchased successfully: {phone}")
+                st.success(f"Number received: {phone}")
             else:
-                st.error(f"Failed to get number. Response: {response}")
+                st.error(f"Failed: {response}")
 
 with col2:
     if st.button("Auto Retry Until Success", use_container_width=True):
         if not service_id:
-            st.error("Please enter a Service ID")
+            st.error("Please enter Service ID")
         else:
             progress = st.progress(0)
             for i in range(8):
-                progress.progress(int(((i + 1) / 8) * 100))
+                progress.progress(int(((i+1)/8)*100))
                 response = api.get_number(service_id)
                 if response.startswith("ACCESS_NUMBER"):
                     parts = response.split(":")
@@ -219,32 +214,33 @@ with col2:
                         "operator": info["operator"],
                         "logo_url": info["logo_url"]
                     })
-                    st.success(f"Number received after {i+1} attempts: {phone}")
+                    st.success(f"Success after {i+1} attempts!")
                     break
                 time.sleep(2)
 
 st.divider()
 
 # ==================== SECTION 3: YOUR NUMBERS ====================
-st.subheader("3️⃣ Your Purchased Numbers")
+st.subheader("3️⃣ Your Numbers")
 
 if not st.session_state.numbers:
-    st.info("No numbers purchased yet. Get a number from Section 2 above.")
+    st.info("No numbers yet. Get a number from section 2.")
 else:
     for i, num in enumerate(st.session_state.numbers):
         with st.container(border=True):
-            col_left, col_right = st.columns([3, 1])
-            
-            with col_left:
-                st.write(f"**Phone:** {num['phone']}")
-                st.write(f"**Service ID:** {num['service']}")
-                st.write(f"**Activation ID:** `{num['activation_id']}`")
-                st.write(f"**Status:** {num['status']}")
+            # Header
+            st.write(f"**Phone:** {num['phone']}   |   **Service:** {num['service']}")
 
-                # Operator
+            # Time elapsed
+            elapsed = (datetime.now() - num["time"]).seconds // 60
+            st.caption(f"Purchased {elapsed} minute(s) ago")
+
+            # Operator with Manual Selector
+            col_op, col_manual = st.columns([2, 2])
+            with col_op:
                 if num.get("logo_url"):
                     try:
-                        st.image(num["logo_url"], width=80)
+                        st.image(num["logo_url"], width=70)
                     except:
                         pass
                 else:
@@ -252,25 +248,45 @@ else:
                     color = {"Airtel":"#FF0000", "Jio":"#00A8E8", "BSNL":"#228B22", "Vi":"#FF6600"}.get(operator, "#888888")
                     st.markdown(f"**Operator:** <span style='background-color:{color};color:white;padding:3px 8px;border-radius:4px'>{operator}</span>", unsafe_allow_html=True)
 
-            with col_right:
+            with col_manual:
+                new_operator = st.selectbox(
+                    "Change Operator",
+                    ["Jio", "Airtel", "BSNL", "Vi", "Unknown"],
+                    index=["Jio", "Airtel", "BSNL", "Vi", "Unknown"].index(num.get("operator", "Unknown")),
+                    key=f"op_{i}"
+                )
+                if new_operator != num.get("operator"):
+                    num["operator"] = new_operator
+
+            st.write(f"**Activation ID:** `{num['activation_id']}`")
+            st.write(f"**Status:** {num['status']}")
+
+            # Prominent Rebtel Link
+            clean = num['phone'].replace("+", "").replace(" ", "")
+            if clean.startswith("91") and len(clean) > 10:
+                clean = clean[2:]
+            st.markdown(f"[🔗 Open in Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
+
+            # OTP & Cancel
+            col1, col2 = st.columns(2)
+            with col1:
                 if st.button("Check OTP", key=f"otp_{i}", use_container_width=True):
                     status = api.get_status(num["activation_id"])
-                    st.write(f"Raw: `{status}`")
+                    st.write(f"Raw Response: `{status}`")
                     if "STATUS_OK" in status:
                         match = re.search(r'\b(\d{4,8})\b', status)
                         if match:
                             num["otp"] = match.group(1)
                             num["status"] = "OTP Received"
-                            st.success(f"OTP: {num['otp']}")
-
-                if st.button("Cancel", key=f"cancel_{i}", use_container_width=True):
+                            st.success(f"OTP Found: {num['otp']}")
+            with col2:
+                if st.button("Cancel Number", key=f"cancel_{i}", use_container_width=True):
                     api.set_status(num["activation_id"], 8)
                     num["status"] = "Cancelled"
-                    st.warning("Number cancelled")
+                    st.warning("Number has been cancelled")
 
-                clean = num['phone'].replace("+", "").replace(" ", "")
-                if clean.startswith("91") and len(clean) > 10:
-                    clean = clean[2:]
-                st.markdown(f"[View on Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
+            if num["otp"]:
+                st.success(f"**OTP:** {num['otp']}")
+                st.code(num["otp"])
 
-st.caption("Tip: Use 'Auto Retry' when numbers are not immediately available.")
+st.caption("Tip: Use Manual Operator change if auto detection is incorrect.")
