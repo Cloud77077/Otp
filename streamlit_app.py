@@ -5,13 +5,13 @@ import time
 import json
 from datetime import datetime
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 st.set_page_config(page_title="OTP Tool", layout="wide", page_icon="🔐")
 
 st.title("🔐 OTP Automation Tool")
 st.markdown("**Buy virtual numbers and receive OTPs easily**")
 
-# ==================== API CLASS ====================
 class OTPDoctor:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -57,7 +57,7 @@ class OTPDoctor:
             "status": status
         })
 
-# ==================== REBTEL DETECTION ====================
+# ==================== PLAYWRIGHT + BEAUTIFULSOUP DETECTION ====================
 def get_rebtel_info(phone):
     try:
         clean = phone.replace("+", "").replace(" ", "").strip()
@@ -65,14 +65,18 @@ def get_rebtel_info(phone):
             clean = clean[2:]
 
         url = f"https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=12)
 
-        if resp.status_code != 200:
-            return {"operator": "Check failed", "logo_url": None}
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=15000)
+            page.wait_for_timeout(3000)  # Wait for JS to load
+            content = page.content()
+            browser.close()
 
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(content, "html.parser")
 
+        # Try to find logo
         logo_url = None
         for img in soup.find_all("img"):
             src = img.get("src", "").lower()
@@ -93,8 +97,8 @@ def get_rebtel_info(phone):
                     logo_url = "https://www.rebtel.com" + logo_url
                 return {"operator": "BSNL", "logo_url": logo_url}
 
-        headings = " ".join([h.get_text() for h in soup.find_all(["h1", "h2", "h3"])]).lower()
-        text = (headings + " " + soup.get_text()).lower()
+        # Text detection from rendered page
+        text = soup.get_text().lower()
 
         if "jio" in text:
             return {"operator": "Jio", "logo_url": logo_url}
@@ -104,7 +108,7 @@ def get_rebtel_info(phone):
             return {"operator": "BSNL", "logo_url": logo_url}
 
         vi_count = text.count("vi ") + text.count("vodafone") + text.count("idea")
-        if vi_count >= 4:
+        if vi_count >= 3:
             return {"operator": "Vi", "logo_url": logo_url}
 
         return {"operator": "Unknown", "logo_url": logo_url}
@@ -130,7 +134,6 @@ if not st.session_state.api_key:
 
 api = OTPDoctor(st.session_state.api_key)
 
-# Balance
 if st.button("Check Balance"):
     st.info(api.get_balance())
 
@@ -224,18 +227,16 @@ st.divider()
 st.subheader("3️⃣ Your Numbers")
 
 if not st.session_state.numbers:
-    st.info("No numbers yet. Get a number from section 2.")
+    st.info("No numbers yet.")
 else:
     for i, num in enumerate(st.session_state.numbers):
         with st.container(border=True):
-            # Header
             st.write(f"**Phone:** {num['phone']}   |   **Service:** {num['service']}")
 
-            # Time elapsed
             elapsed = (datetime.now() - num["time"]).seconds // 60
             st.caption(f"Purchased {elapsed} minute(s) ago")
 
-            # Operator with Manual Selector
+            # Operator + Manual Selector
             col_op, col_manual = st.columns([2, 2])
             with col_op:
                 if num.get("logo_url"):
@@ -261,13 +262,11 @@ else:
             st.write(f"**Activation ID:** `{num['activation_id']}`")
             st.write(f"**Status:** {num['status']}")
 
-            # Prominent Rebtel Link
             clean = num['phone'].replace("+", "").replace(" ", "")
             if clean.startswith("91") and len(clean) > 10:
                 clean = clean[2:]
             st.markdown(f"[🔗 Open in Rebtel](https://www.rebtel.com/en/recharge/india/products?msisdn=+91{clean})")
 
-            # OTP & Cancel
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Check OTP", key=f"otp_{i}", use_container_width=True):
@@ -283,10 +282,10 @@ else:
                 if st.button("Cancel Number", key=f"cancel_{i}", use_container_width=True):
                     api.set_status(num["activation_id"], 8)
                     num["status"] = "Cancelled"
-                    st.warning("Number has been cancelled")
+                    st.warning("Number cancelled")
 
             if num["otp"]:
                 st.success(f"**OTP:** {num['otp']}")
                 st.code(num["otp"])
 
-st.caption("Tip: Use Manual Operator change if auto detection is incorrect.")
+st.caption("Playwright-powered Rebtel detection + Manual override available")
